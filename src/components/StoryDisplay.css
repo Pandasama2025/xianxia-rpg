@@ -1,0 +1,46 @@
+.story-display {
+  background-color: rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  max-width: 800px;
+  width: 100%;
+}
+
+.story-title {
+  font-family: 'Ma Shan Zheng', cursive;
+  font-size: 2em;
+  color: #2c3e50;
+  text-align: center;
+  margin-bottom: 20px;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.story-text {
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 1.1em;
+  line-height: 1.8;
+  color: #34495e;
+  text-align: justify;
+  white-space: pre-line;
+}
+
+.story-text p {
+  margin-bottom: 15px;
+}
+
+@media (max-width: 768px) {
+  .story-display {
+    margin: 10px;
+    padding: 15px;
+  }
+
+  .story-title {
+    font-size: 1.5em;
+  }
+
+  .story-text {
+    font-size: 1em;
+  }
+}
