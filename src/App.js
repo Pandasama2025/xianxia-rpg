@@ -1,304 +1,268 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import './App.css';
-import StoryDisplay from './components/StoryDisplay';
-import Options from './components/Options';
-import PlayerStatus from './components/PlayerStatus';
-import SaveLoadScreen from './components/SaveLoadScreen';
-import SoundControls from './components/SoundControls';
-import Cultivation from './components/Cultivation';
-import BattleScene from './components/BattleScene';
-import soundManager from './audio/soundManager';
-import storyData from './data/story.json';
 import './styles/WaterInkTheme.css';
 
+// 导入组件
+import StoryDisplay from './components/StoryDisplay';
+import Options from './components/Options';
+import StatusBar from './components/StatusBar';
+import SoundControls from './components/SoundControls';
+import Settings from './components/Settings';
+import SaveLoad from './components/SaveLoad';
+import CharacterSheet from './components/CharacterSheet';
+
+// 导入数据和工具
+import { chapters } from './data/storyData';
+import { initialPlayerStatus } from './data/gameState';
+import { applyEffects } from './utils/gameUtils';
+import soundManager from './audio/soundManager';
+
 function App() {
-  const [currentChapter, setCurrentChapter] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [playerStatus, setPlayerStatus] = useState({
-    '修为': 0,
-    '灵力': 100,
-    '体力': 100,
-    '道心': 50,
-    '因果值': 0,
-    '执念值': 0,
-    '剑意类型': "无",
-    '宗门立场': "无"
-  });
-  const [showSaveLoadScreen, setShowSaveLoadScreen] = useState(false);
-  const [showCultivation, setShowCultivation] = useState(false);
-  const [showBattle, setShowBattle] = useState(false);
-  const [currentEnemy, setCurrentEnemy] = useState(null);
+  // 游戏状态
+  const [playerStatus, setPlayerStatus] = useState(initialPlayerStatus);
+  const [currentChapter, setCurrentChapter] = useState(chapters[0]);
+  const [storyHistory, setStoryHistory] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   
+  // UI状态
+  const [uiState, setUiState] = useState({
+    showOptions: true,
+    activeView: 'story', // 'story', 'settings', 'save', 'character'
+    theme: 'default',
+    fontSize: 16
+  });
+  
+  // WebSocket连接
+  const [ws, setWs] = useState(null);
+  
+  // 初始化音效和WebSocket连接
   useEffect(() => {
-    setCurrentChapter(storyData.chapters[0]);
-    if (storyData.variables) {
-      setPlayerStatus(prevStatus => ({
-        ...prevStatus,
-        ...storyData.variables
-      }));
-    }
-    setIsLoading(false);
+    // 初始化音效
     soundManager.init();
-    soundManager.playBackgroundMusic('main');
+    
+    // WebSocket连接尝试
+    let wsConnection = null;
+    try {
+      wsConnection = new WebSocket('ws://localhost:3001');
+      
+      wsConnection.onopen = () => {
+        console.log('WebSocket连接已建立');
+        // 发送初始化消息
+        wsConnection.send(JSON.stringify({ type: 'init', userId: 'player1' }));
+      };
+      
+      wsConnection.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('收到WebSocket消息:', data);
+        
+        // 处理不同类型的消息
+        if (data.type === 'chapter_update') {
+          handleChapterUpdate(data.chapter);
+        } else if (data.type === 'player_update') {
+          handlePlayerUpdate(data.player);
+        }
+      };
+      
+      wsConnection.onerror = (error) => {
+        console.log('WebSocket连接失败，继续以离线模式运行');
+      };
+      
+      wsConnection.onclose = () => {
+        console.log('WebSocket连接已关闭');
+      };
+      
+      setWs(wsConnection);
+    } catch (error) {
+      console.log('无法建立WebSocket连接，以离线模式运行');
+    }
+    
+    // 清理函数
     return () => {
-      soundManager.stopBackgroundMusic();
+      if (wsConnection) {
+        wsConnection.close();
+      }
+      soundManager.stopAll();
     };
   }, []);
   
-  const getCurrentOptions = () => {
-    if (currentChapter.dialogue && currentChapter.dialogue.length > 0) {
-      const lastDialogue = currentChapter.dialogue[currentChapter.dialogue.length - 1];
-      if (lastDialogue.options) {
-        return lastDialogue.options;
+  // 处理章节更新
+  const handleChapterUpdate = (chapterData) => {
+    if (chapterData && chapterData.id) {
+      const updatedChapter = chapters.find(ch => ch.id === chapterData.id) || chapterData;
+      setCurrentChapter(updatedChapter);
+    }
+  };
+  
+  // 处理玩家状态更新
+  const handlePlayerUpdate = (playerData) => {
+    if (playerData) {
+      setPlayerStatus(prevStatus => ({
+        ...prevStatus,
+        ...playerData
+      }));
+    }
+  };
+  
+  // 处理玩家选项选择
+  const handleOptionSelect = useCallback((option) => {
+    // 保存当前状态到历史记录
+    setStoryHistory(prev => [
+      ...prev, 
+      { 
+        chapterId: currentChapter.id,
+        playerStatus: {...playerStatus},
+        selectedOption: option.text
+      }
+    ]);
+    
+    // 应用效果到玩家状态
+    if (option.effects) {
+      const updatedStatus = applyEffects(playerStatus, option.effects);
+      setPlayerStatus(updatedStatus);
+      
+      // 播放相关音效
+      if (option.effects.sound) {
+        soundManager.play(option.effects.sound);
       }
     }
-    return currentChapter.options || [];
-  };
-  
-  const handleResetGame = () => {
-    const initialStatus = {
-      '修为': 0,
-      '灵力': 100,
-      '体力': 100,
-      '道心': 50
-    };
     
-    if (storyData.variables) {
-      setPlayerStatus({
-        ...initialStatus,
-        ...storyData.variables
-      });
-    } else {
-      setPlayerStatus(initialStatus);
-    }
-    
-    setCurrentChapter(storyData.chapters[0]);
-    soundManager.playUISound('select');
-  };
-  
-  const handleOptionSelect = (option) => {
-    soundManager.playUISound('click');
-    
-    if (option.battle) {
-      setCurrentEnemy(option.battle);
-      setShowBattle(true);
-      return;
-    }
-    
-    if (option.effects && Object.keys(option.effects).length > 0) {
-      const hadCultivationImprovement = option.effects['修为'] && option.effects['修为'] > 0;
+    // 切换到新章节
+    if (option.nextChapter) {
+      setIsLoading(true);
       
-      setPlayerStatus(prevStatus => {
-        const newStatus = { ...prevStatus };
-        
-        Object.entries(option.effects).forEach(([stat, value]) => {
-          if (typeof value === 'number') {
-            if (newStatus.hasOwnProperty(stat)) {
-              newStatus[stat] += value;
-            } else {
-              newStatus[stat] = value;
-            }
-            
-            if (newStatus[stat] < 0) {
-              newStatus[stat] = 0;
-            }
-            
-            if (stat === '灵力' && newStatus[stat] > 100) {
-              newStatus[stat] = 100;
-            }
-            if (stat === '道心' && newStatus[stat] > 100) {
-              newStatus[stat] = 100;
-            }
-            if (stat === '体力' && newStatus[stat] > 100) {
-              newStatus[stat] = 100;
-            }
-          } else if (typeof value === 'boolean') {
-            newStatus[stat] = value;
-          } else if (typeof value === 'string') {
-            if (stat === '物品') {
-              const inventory = newStatus['物品库存'] || [];
-              inventory.push(value);
-              newStatus['物品库存'] = inventory;
-            } else {
-              newStatus[stat] = value;
-            }
+      // 模拟加载时间（可替换为实际加载逻辑）
+      setTimeout(() => {
+        const nextChapter = chapters.find(ch => ch.id === option.nextChapter);
+        if (nextChapter) {
+          setCurrentChapter(nextChapter);
+          
+          // 如果新章节有背景音乐，播放它
+          if (nextChapter.backgroundMusic) {
+            soundManager.playMusic(nextChapter.backgroundMusic);
           }
-        });
-        
-        return newStatus;
-      });
-      
-      if (hadCultivationImprovement) {
-        soundManager.playEffectSound('levelUp');
-      }
-    }
-    
-    if (option.nextId) {
-      const nextChapter = storyData.chapters.find(
-        chapter => chapter.id === option.nextId
-      );
-      
-      if (nextChapter) {
-        setCurrentChapter(nextChapter);
-        
-        if (nextChapter.assets && nextChapter.assets.bgm) {
-          soundManager.playBackgroundMusic(nextChapter.assets.bgm);
         }
-      } else {
-        console.error('找不到章节:', option.nextId);
-      }
+        setIsLoading(false);
+      }, 500);
     }
-  };
-
-  const handleLoadGame = (chapterId, loadedPlayerStatus) => {
-    setIsLoading(true);
-    soundManager.playUISound('select');
-    setPlayerStatus(loadedPlayerStatus);
-    
-    const chapter = storyData.chapters.find(
-      chapter => chapter.id === chapterId
-    );
-    
-    if (chapter) {
-      setCurrentChapter(chapter);
-      if (chapter.assets && chapter.assets.bgm) {
-        soundManager.playBackgroundMusic(chapter.assets.bgm);
-      } else {
-        soundManager.playBackgroundMusic('main');
-      }
-    } else {
-      console.error('加载游戏时找不到章节:', chapterId);
-    }
-    
-    setIsLoading(false);
-  };
-
-  const toggleSaveLoadScreen = () => {
-    setShowSaveLoadScreen(!showSaveLoadScreen);
-    soundManager.playUISound('click');
-  };
-
-  const toggleCultivation = () => {
-    setShowCultivation(!showCultivation);
-    soundManager.playUISound('click');
-  };
-
-  const handleCultivationUpdate = (effects) => {
-    setPlayerStatus(prevStatus => {
-      const newStatus = { ...prevStatus };
-      Object.entries(effects).forEach(([stat, value]) => {
-        if (newStatus.hasOwnProperty(stat)) {
-          newStatus[stat] += value;
-          if (newStatus[stat] < 0) newStatus[stat] = 0;
-          if (stat === '灵力' && newStatus[stat] > 100) newStatus[stat] = 100;
-          if (stat === '道心' && newStatus[stat] > 100) newStatus[stat] = 100;
-          if (stat === '体力' && newStatus[stat] > 100) newStatus[stat] = 100;
-        }
-      });
-      return newStatus;
+  }, [currentChapter, playerStatus]);
+  
+  // 切换UI视图
+  const switchView = (view) => {
+    setUiState({
+      ...uiState,
+      activeView: view
     });
-  };
-
-  const handleBattleUpdate = (effects) => {
-    setPlayerStatus(prevStatus => {
-      const newStatus = { ...prevStatus };
-      Object.entries(effects).forEach(([stat, value]) => {
-        if (newStatus.hasOwnProperty(stat)) {
-          newStatus[stat] += value;
-          if (newStatus[stat] < 0) newStatus[stat] = 0;
-          if (stat === '灵力' && newStatus[stat] > 100) newStatus[stat] = 100;
-          if (stat === '体力' && newStatus[stat] > 100) newStatus[stat] = 100;
-        }
-      });
-      return newStatus;
-    });
-  };
-
-  const handleBattleEnd = (isVictory) => {
-    setShowBattle(false);
-    setCurrentEnemy(null);
     
-    if (isVictory) {
-      soundManager.playEffectSound('victory');
-      if (currentChapter.battle && currentChapter.battle.victory) {
-        const nextChapter = storyData.chapters.find(
-          chapter => chapter.id === currentChapter.battle.victory
-        );
-        if (nextChapter) {
-          setCurrentChapter(nextChapter);
-        }
-      }
-    } else {
-      soundManager.playEffectSound('defeat');
-      if (currentChapter.battle && currentChapter.battle.defeat) {
-        const nextChapter = storyData.chapters.find(
-          chapter => chapter.id === currentChapter.battle.defeat
-        );
-        if (nextChapter) {
-          setCurrentChapter(nextChapter);
-        }
-      }
+    // 播放UI切换音效
+    soundManager.playUI('switch');
+  };
+  
+  // 处理音量变化
+  const handleVolumeChange = (type, value) => {
+    switch(type) {
+      case 'master':
+        soundManager.setMasterVolume(value);
+        break;
+      case 'bgm':
+        soundManager.setMusicVolume(value);
+        break;
+      case 'effects':
+        soundManager.setEffectsVolume(value);
+        break;
+      case 'ui':
+        soundManager.setUIVolume(value);
+        break;
+      default:
+        break;
     }
   };
-
-  const triggerBattle = (enemyType) => {
-    setCurrentEnemy(enemyType);
-    setShowBattle(true);
-  };
-
-  if (isLoading) {
-    return <div>加载中...</div>;
-  }
-
+  
   return (
-    <div className="App">
+    <div className="App water-ink-theme">
       <header className="App-header">
-        <h1>仙侠文字RPG</h1>
-        <div className="game-controls">
-          <button onClick={toggleSaveLoadScreen}>存档/读档</button>
-          <button onClick={toggleCultivation}>修炼</button>
-          <button onClick={handleResetGame}>重新开始</button>
-          <button onClick={() => triggerBattle('test')}>测试战斗</button>
+        <h1 className="ink-heading">修仙奇缘</h1>
+        <div className="header-controls">
+          <button 
+            className={`header-button ${uiState.activeView === 'story' ? 'active' : ''}`}
+            onClick={() => switchView('story')}
+          >
+            故事
+          </button>
+          <button 
+            className={`header-button ${uiState.activeView === 'character' ? 'active' : ''}`}
+            onClick={() => switchView('character')}
+          >
+            人物
+          </button>
+          <button 
+            className={`header-button ${uiState.activeView === 'save' ? 'active' : ''}`}
+            onClick={() => switchView('save')}
+          >
+            存档
+          </button>
+          <button 
+            className={`header-button ${uiState.activeView === 'settings' ? 'active' : ''}`}
+            onClick={() => switchView('settings')}
+          >
+            设置
+          </button>
         </div>
-        <PlayerStatus status={playerStatus} />
         <SoundControls />
       </header>
       
-      <main>
-        {showBattle ? (
-          <BattleScene
-            enemy={currentEnemy}
-            playerStatus={playerStatus}
-            onUpdate={handleBattleUpdate}
-            onEnd={handleBattleEnd}
-          />
-        ) : (
-          <>
-            <StoryDisplay chapter={currentChapter} />
-            <Options
-              options={getCurrentOptions()}
-              onSelect={handleOptionSelect}
+      <main className="App-main">
+        <StatusBar playerStatus={playerStatus} />
+        
+        <div className="content-area">
+          {uiState.activeView === 'story' && (
+            <>
+              <StoryDisplay 
+                chapter={currentChapter} 
+                playerStatus={playerStatus}
+                isLoading={isLoading}
+              />
+              
+              {!isLoading && uiState.showOptions && (
+                <Options 
+                  options={currentChapter.options} 
+                  onSelect={handleOptionSelect}
+                  playerStatus={playerStatus}
+                />
+              )}
+            </>
+          )}
+          
+          {uiState.activeView === 'character' && (
+            <CharacterSheet playerStatus={playerStatus} />
+          )}
+          
+          {uiState.activeView === 'settings' && (
+            <Settings onVolumeChange={handleVolumeChange} />
+          )}
+          
+          {uiState.activeView === 'save' && (
+            <SaveLoad 
+              gameState={{
+                playerStatus,
+                currentChapter,
+                storyHistory
+              }}
+              onLoad={(saveData) => {
+                if (saveData.playerStatus) setPlayerStatus(saveData.playerStatus);
+                if (saveData.currentChapter) setCurrentChapter(saveData.currentChapter);
+                if (saveData.storyHistory) setStoryHistory(saveData.storyHistory);
+                switchView('story');
+              }}
             />
-          </>
-        )}
-        
-        {showSaveLoadScreen && (
-          <SaveLoadScreen
-            onClose={toggleSaveLoadScreen}
-            onLoad={handleLoadGame}
-            currentChapter={currentChapter}
-            playerStatus={playerStatus}
-          />
-        )}
-        
-        {showCultivation && (
-          <Cultivation
-            onClose={toggleCultivation}
-            onUpdate={handleCultivationUpdate}
-            playerStatus={playerStatus}
-          />
-        )}
+          )}
+        </div>
       </main>
+      
+      <footer className="App-footer">
+        <div className="footer-content">
+          <p>修仙奇缘 &copy; 2023 - 一个修仙世界的冒险故事</p>
+        </div>
+      </footer>
     </div>
   );
 }
